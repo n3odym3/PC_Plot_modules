@@ -1,16 +1,19 @@
 from __future__ import annotations
+
 import csv
-import uuid
 from typing import Any, Dict, List, Optional, Tuple
+import uuid
 
 import dearpygui.dearpygui as dpg
-import numpy as np
 from loguru import logger
+import numpy as np
 
-from core.window_base import WindowBase
-from core.input_output_types import IOTypes
-from core.app_state import app_state
 from config.display_scaling import display_scaling
+from core.app_state import app_state
+from core.file_explorer import file_explorer
+from core.input_output_types import IOTypes
+from core.window_base import WindowBase
+from core.tools.clipboard_injector import clipboardinjector
 
 
 class Boxplot_win(WindowBase):
@@ -25,100 +28,71 @@ class Boxplot_win(WindowBase):
 
     description: str = "Interactive boxplot and statistical time distribution visualization."
 
-    display_mode: str
-    show_mean: bool
-    show_median: bool
-    show_std_ribbon: bool
-    show_minmax_ribbon: bool
-    show_scatter: bool
-    time_binning: bool
-    n_bins: int
-    autoscale: bool
+    # 1. Window Configuration
+    label = "Boxplot"
+    win_width = display_scaling.scale(380)
+    win_height = display_scaling.scale(280)
 
-    series_data: Dict[str, Dict[str, Any]]
-    selected_uuid: Optional[str]
+    # 2. Input/Output definitions
+    accepted_input_types = [
+        IOTypes.SAMPLE,
+        IOTypes.ROI_SAMPLE,
+        IOTypes.DATALIST,
+        IOTypes.CMD_DICT,
+    ]
+    outputs = {
+        "Summary Sample": IOTypes.SAMPLE,
+        "Datalist": IOTypes.DATALIST,
+        "CMD": IOTypes.CMD_DICT,
+    }
 
-    plot_tag: str
-    xaxis_tag: str
-    yaxis_tag: str
-    mode_combo_tag: str
-    show_mean_chk_tag: str
-    show_median_chk_tag: str
-    show_std_chk_tag: str
-    show_minmax_chk_tag: str
-    show_scatter_chk_tag: str
-    binning_chk_tag: str
-    n_bins_tag: str
-    status_text_tag: str
+    # 3. Persistent fields
+    persistent_fields = [
+        "label",
+        "display_mode",
+        "show_mean",
+        "show_median",
+        "show_std_ribbon",
+        "show_minmax_ribbon",
+        "show_scatter",
+        "time_binning",
+        "n_bins",
+        "autoscale",
+    ]
 
-    def __init__(
-        self,
-        label: str = "Boxplot",
-        win_width: int = 380,
-        win_height: int = 280,
-        pos: Tuple[int, int] = (20, 20),
-        uuid: Optional[str] = None,
-        outputs: Optional[Dict[str, Any]] = None,
-        visible: bool = True,
-        **kwargs: Any,
-    ) -> None:
+    # Persistent field defaults
+    display_mode: str = "Candlestick Boxplot (IQR + Min/Max)"
+    show_mean: bool = True
+    show_median: bool = True
+    show_std_ribbon: bool = False
+    show_minmax_ribbon: bool = False
+    show_scatter: bool = False
+    time_binning: bool = False
+    n_bins: int = 50
+    autoscale: bool = True
+
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the Boxplot window module.
 
         Args:
-            label: Window display title.
-            win_width: Initial window width in pixels.
-            win_height: Initial window height in pixels.
-            pos: Initial (x, y) window position on screen.
-            uuid: Optional unique module identifier.
-            outputs: Optional predefined output connections dictionary.
-            visible: Whether the window is visible on creation.
-            **kwargs: Additional configuration parameters and persistent fields.
+            **kwargs: Configuration parameters and persistent fields forwarded to WindowBase.
         """
-        self._persistent_fields = [
-            "label", "display_mode", "show_mean", "show_median", "show_std_ribbon",
-            "show_minmax_ribbon", "show_scatter", "time_binning", "n_bins", "autoscale"
-        ]
+        super().__init__(**kwargs)
 
-        super().__init__(
-            label=label,
-            pos=pos,
-            win_width=win_width,
-            win_height=win_height,
-            uuid=uuid,
-            outputs=outputs,
-            visible=visible,
-            **kwargs,
-        )
-
-        self.accepted_input_types = [
-            IOTypes.SAMPLE,
-            IOTypes.ROI_SAMPLE,
-            IOTypes.DATALIST,
-            IOTypes.CMD_DICT,
-        ]
-
-        self.outputs = {
-            "Summary Sample": IOTypes.SAMPLE,
-            "Datalist": IOTypes.DATALIST,
-            "CMD": IOTypes.CMD_DICT,
-        }
-        self.connections = {k: [] for k in self.outputs}
-
-        # Parameters
-        self.display_mode = str(kwargs.get("display_mode", "Candlestick Boxplot (IQR + Min/Max)"))
-        self.show_mean = bool(kwargs.get("show_mean", True))
-        self.show_median = bool(kwargs.get("show_median", True))
-        self.show_std_ribbon = bool(kwargs.get("show_std_ribbon", False))
-        self.show_minmax_ribbon = bool(kwargs.get("show_minmax_ribbon", False))
-        self.show_scatter = bool(kwargs.get("show_scatter", False))
-        self.time_binning = bool(kwargs.get("time_binning", False))
-        self.n_bins = int(kwargs.get("n_bins", 50))
-        self.autoscale = bool(kwargs.get("autoscale", True))
+        self.display_mode = str(self.display_mode if self.display_mode is not None else "Candlestick Boxplot (IQR + Min/Max)")
+        self.show_mean = bool(self.show_mean if self.show_mean is not None else True)
+        self.show_median = bool(self.show_median if self.show_median is not None else True)
+        self.show_std_ribbon = bool(self.show_std_ribbon if self.show_std_ribbon is not None else False)
+        self.show_minmax_ribbon = bool(self.show_minmax_ribbon if self.show_minmax_ribbon is not None else False)
+        self.show_scatter = bool(self.show_scatter if self.show_scatter is not None else False)
+        self.time_binning = bool(self.time_binning if self.time_binning is not None else False)
+        self.n_bins = int(self.n_bins if self.n_bins is not None else 50)
+        self.autoscale = bool(self.autoscale if self.autoscale is not None else True)
 
         # Data storage: { series_uuid: { 'raw_x': ..., 'raw_y': ..., 'stats': {...}, 'name': str } }
-        self.series_data = {}
-        self.selected_uuid = None
+        self.series_data: Dict[str, Dict[str, Any]] = {}
+        self.selected_uuid: Optional[str] = None
 
         # Tags
         self.plot_tag = f"box_plot_{self.UUID}"
@@ -137,14 +111,8 @@ class Boxplot_win(WindowBase):
         # Color themes
         self._setup_themes()
 
-        with dpg.window(
-            label=self.label,
-            width=self.win_width,
-            height=self.win_height,
-            pos=self.pos,
-            tag=self.winID,
-            show=self.visible,
-        ):
+        scale = display_scaling.scale
+        with self.window():
             # Controls header
             with dpg.group(horizontal=True):
                 dpg.add_combo(
@@ -156,11 +124,12 @@ class Boxplot_win(WindowBase):
                     ],
                     default_value=self.display_mode,
                     tag=self.mode_combo_tag,
-                    width=display_scaling.scale(210),
+                    width=scale(210),
                     callback=self._on_display_mode_changed,
                 )
                 dpg.add_button(label="Autoscale", callback=lambda: self.autofit_axis())
                 dpg.add_button(label="Export CSV", callback=self._export_csv_cb)
+                dpg.add_button(label="Export TSV", callback=self.export_tsv_cb)
                 dpg.add_button(label="Clear", callback=self.clear_plot)
 
             with dpg.group(horizontal=True):
@@ -205,7 +174,7 @@ class Boxplot_win(WindowBase):
                     default_value=self.n_bins,
                     min_value=5,
                     max_value=200,
-                    width=display_scaling.scale(55),
+                    width=scale(55),
                     step=0,
                     show=self.time_binning,
                     callback=self._on_binning_toggled,
@@ -227,17 +196,29 @@ class Boxplot_win(WindowBase):
         self.update_permission()
 
     def update_permission(self) -> None:
-        """
-        Adjust module permissions and UI visibility based on the application mode.
-        """
+        """Adjust module permissions and UI visibility based on the application mode."""
         is_user = app_state.mode == "user"
         if dpg.does_item_exist(self.winID):
             dpg.configure_item(self.winID, no_close=is_user)
 
+    def close(self) -> None:
+        """Clean up DPG plot themes on module close."""
+        theme_attrs = [
+            "theme_mean_line",
+            "theme_std_shade",
+            "theme_minmax_shade",
+            "theme_scatter_dots",
+            "theme_box_lines",
+            "theme_median_line",
+        ]
+        for attr in theme_attrs:
+            tag = getattr(self, attr, None)
+            if tag and dpg.does_item_exist(tag):
+                dpg.delete_item(tag)
+        super().close()
+
     def _setup_themes(self) -> None:
-        """
-        Initialize Dear PyGui plot series color and styling themes.
-        """
+        """Initialize Dear PyGui plot series color and styling themes."""
         with dpg.theme() as self.theme_mean_line:
             with dpg.theme_component(dpg.mvLineSeries):
                 dpg.add_theme_color(dpg.mvPlotCol_Line, (255, 200, 60, 255), category=dpg.mvThemeCat_Plots)
@@ -274,9 +255,7 @@ class Boxplot_win(WindowBase):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """
-        Handle display mode combo selection changes.
-        """
+        """Handle display mode combo selection changes."""
         self.display_mode = app_data
         self._update_plot_views()
 
@@ -288,9 +267,7 @@ class Boxplot_win(WindowBase):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """
-        Handle time binning toggle and bin count adjustments.
-        """
+        """Handle time binning toggle and bin count adjustments."""
         if dpg.does_item_exist(self.binning_chk_tag):
             self.time_binning = bool(dpg.get_value(self.binning_chk_tag))
         if dpg.does_item_exist(self.n_bins_tag):
@@ -319,7 +296,7 @@ class Boxplot_win(WindowBase):
         if len(x_arr) == 0 or len(y_arr) == 0:
             return {}
 
-        mask = (~np.isnan(x_arr)) & (~np.isnan(y_arr))
+        mask = np.isfinite(x_arr) & np.isfinite(y_arr)
         x_clean = x_arr[mask]
         y_clean = y_arr[mask]
 
@@ -442,9 +419,7 @@ class Boxplot_win(WindowBase):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """
-        Redraw all active statistical visualization layers inside the Dear PyGui plot.
-        """
+        """Redraw all active statistical visualization layers inside the Dear PyGui plot."""
         if dpg.does_item_exist(self.show_median_chk_tag):
             self.show_median = bool(dpg.get_value(self.show_median_chk_tag))
         if dpg.does_item_exist(self.show_mean_chk_tag):
@@ -492,8 +467,8 @@ class Boxplot_win(WindowBase):
 
             # 3. Mean +/- Std Dev Ribbon
             if (self.show_std_ribbon and self.display_mode != "Candlestick Boxplot (IQR + Min/Max)") or self.display_mode == "Mean +/- Std Ribbon":
-                std_upper = [m + s for m, s in zip(mean, std)]
-                std_lower = [max(0.0, m - s) for m, s in zip(mean, std)]
+                std_upper = (stats["mean"] + stats["std"]).tolist()
+                std_lower = np.maximum(0.0, stats["mean"] - stats["std"]).tolist()
                 std_tag = f"box_std_shade_{uid}"
                 dpg.add_shade_series(x, std_lower, y2=std_upper, label=f"{name} (+/-1 Std)", parent=self.yaxis_tag, tag=std_tag)
                 dpg.bind_item_theme(std_tag, self.theme_std_shade)
@@ -538,9 +513,7 @@ class Boxplot_win(WindowBase):
             self.autofit_axis()
 
     def autofit_axis(self) -> None:
-        """
-        Automatically fit both horizontal and vertical axes to active data bounds.
-        """
+        """Automatically fit both horizontal and vertical axes to active data bounds."""
         if dpg.does_item_exist(self.xaxis_tag):
             dpg.fit_axis_data(self.xaxis_tag)
         if dpg.does_item_exist(self.yaxis_tag):
@@ -563,16 +536,16 @@ class Boxplot_win(WindowBase):
         payload = {
             "uuid": uid,
             "name": f"{s_data.get('name', 'Sample')} (Stats)",
-            "x": stats["x"],
-            "y": stats["mean"],
-            "mean": stats["mean"],
-            "std": stats["std"],
-            "min": stats["min"],
-            "max": stats["max"],
-            "median": stats["median"],
-            "q25": stats["q25"],
-            "q75": stats["q75"],
-            "counts": stats["counts"],
+            "x": stats["x"].tolist() if hasattr(stats["x"], "tolist") else stats["x"],
+            "y": stats["mean"].tolist() if hasattr(stats["mean"], "tolist") else stats["mean"],
+            "mean": stats["mean"].tolist() if hasattr(stats["mean"], "tolist") else stats["mean"],
+            "std": stats["std"].tolist() if hasattr(stats["std"], "tolist") else stats["std"],
+            "min": stats["min"].tolist() if hasattr(stats["min"], "tolist") else stats["min"],
+            "max": stats["max"].tolist() if hasattr(stats["max"], "tolist") else stats["max"],
+            "median": stats["median"].tolist() if hasattr(stats["median"], "tolist") else stats["median"],
+            "q25": stats["q25"].tolist() if hasattr(stats["q25"], "tolist") else stats["q25"],
+            "q75": stats["q75"].tolist() if hasattr(stats["q75"], "tolist") else stats["q75"],
+            "counts": stats["counts"].tolist() if hasattr(stats["counts"], "tolist") else stats["counts"],
             "action": "select",
         }
 
@@ -581,7 +554,7 @@ class Boxplot_win(WindowBase):
             try:
                 mod.input_cb(sample=payload, data_type=IOTypes.SAMPLE)
             except Exception as e:
-                logger.debug(f"Boxplot Summary Sample emission failed: {e}")
+                logger.debug(f"[{self.label}] Summary Sample emission failed: {e}")
 
     def _export_csv_cb(
         self,
@@ -591,41 +564,90 @@ class Boxplot_win(WindowBase):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """
-        Export statistical summary table to a CSV file.
-        """
+        """Export statistical summary table to a CSV file."""
         if not self.selected_uuid or self.selected_uuid not in self.series_data:
+            logger.warning(f"[{self.label}] Export aborted: no series selected.")
             return
         s_data = self.series_data[self.selected_uuid]
         stats = s_data.get("stats", {})
         if not stats or len(stats.get("x", [])) == 0:
+            logger.warning(f"[{self.label}] Export aborted: selected series has no statistics.")
             return
 
         name = s_data.get("name", "stats").replace(" ", "_")
-        csv_filename = f"{name}_boxplot_stats.csv"
+        default_filename = f"{name}_boxplot_stats.csv"
 
-        try:
-            with open(csv_filename, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(["Time_s", "Count", "Mean", "StdDev", "SEM", "Min", "Q25", "Median", "Q75", "Max"])
-                for i in range(len(stats["x"])):
-                    writer.writerow([
-                        f"{stats['x'][i]:.4f}",
-                        stats["counts"][i],
-                        f"{stats['mean'][i]:.4f}",
-                        f"{stats['std'][i]:.4f}",
-                        f"{stats['sem'][i]:.4f}",
-                        f"{stats['min'][i]:.4f}",
-                        f"{stats['q25'][i]:.4f}",
-                        f"{stats['median'][i]:.4f}",
-                        f"{stats['q75'][i]:.4f}",
-                        f"{stats['max'][i]:.4f}",
-                    ])
-            if dpg.does_item_exist(self.status_text_tag):
-                dpg.set_value(self.status_text_tag, f"Exported stats to {csv_filename}")
-                dpg.configure_item(self.status_text_tag, color=(100, 255, 120))
-        except Exception as e:
-            logger.error(f"Boxplot CSV export failed: {e}")
+        def _save_callback(filepath: str, selected_ext: str = "") -> None:
+            if not filepath:
+                return
+            try:
+                with open(filepath, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Time_s", "Count", "Mean", "StdDev", "SEM", "Min", "Q25", "Median", "Q75", "Max"])
+                    for i in range(len(stats["x"])):
+                        writer.writerow([
+                            f"{stats['x'][i]:.4f}",
+                            stats["counts"][i],
+                            f"{stats['mean'][i]:.4f}",
+                            f"{stats['std'][i]:.4f}",
+                            f"{stats['sem'][i]:.4f}",
+                            f"{stats['min'][i]:.4f}",
+                            f"{stats['q25'][i]:.4f}",
+                            f"{stats['median'][i]:.4f}",
+                            f"{stats['q75'][i]:.4f}",
+                            f"{stats['max'][i]:.4f}",
+                        ])
+                if dpg.does_item_exist(self.status_text_tag):
+                    dpg.set_value(self.status_text_tag, f"Exported stats to {filepath}")
+                    dpg.configure_item(self.status_text_tag, color=(100, 255, 120))
+                logger.success(f"[{self.label}] Stats exported to {filepath}")
+            except Exception as e:
+                logger.error(f"[{self.label}] CSV export failed: {e}")
+
+        file_explorer.save_file(
+            default_path=default_filename,
+            extensions=[("CSV files", "*.csv"), ("All files", "*.*")],
+            callback=_save_callback,
+        )
+
+    def export_tsv_cb(
+        self,
+        sender: Any = None,
+        app_data: Any = None,
+        user_data: Any = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Export statistical summary table to system clipboard in TSV format."""
+        if not self.selected_uuid or self.selected_uuid not in self.series_data:
+            logger.warning(f"[{self.label}] Export aborted: no series selected.")
+            return
+        s_data = self.series_data[self.selected_uuid]
+        stats = s_data.get("stats", {})
+        if not stats or len(stats.get("x", [])) == 0:
+            logger.warning(f"[{self.label}] Export aborted: selected series has no statistics.")
+            return
+
+        lines = ["Time_s\tCount\tMean\tStdDev\tSEM\tMin\tQ25\tMedian\tQ75\tMax"]
+        for i in range(len(stats["x"])):
+            lines.append(
+                f"{stats['x'][i]:.4f}\t"
+                f"{stats['counts'][i]}\t"
+                f"{stats['mean'][i]:.4f}\t"
+                f"{stats['std'][i]:.4f}\t"
+                f"{stats['sem'][i]:.4f}\t"
+                f"{stats['min'][i]:.4f}\t"
+                f"{stats['q25'][i]:.4f}\t"
+                f"{stats['median'][i]:.4f}\t"
+                f"{stats['q75'][i]:.4f}\t"
+                f"{stats['max'][i]:.4f}"
+            )
+
+        clipboardinjector.send_text("\n".join(lines))
+        if dpg.does_item_exist(self.status_text_tag):
+            dpg.set_value(self.status_text_tag, "Stats exported to TSV clipboard.")
+            dpg.configure_item(self.status_text_tag, color=(100, 255, 120))
+        logger.success(f"[{self.label}] Stats exported to clipboard in TSV format.")
 
     def clear_plot(
         self,
@@ -635,9 +657,7 @@ class Boxplot_win(WindowBase):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """
-        Remove all series, clear plot canvas, and reset selection state.
-        """
+        """Remove all series, clear plot canvas, and reset selection state."""
         self.series_data.clear()
         self.selected_uuid = None
         if dpg.does_item_exist(self.yaxis_tag):
@@ -686,7 +706,7 @@ class Boxplot_win(WindowBase):
                 y_val = s_dict.get("y")
                 name_val = s_dict.get("name", "Sample")
                 xlabel = s_dict.get("xlabel", "Time (s)")
-                ylabel = s_dict.get("ylabel", "Speed")
+                ylabel = s_dict.get("ylabel", "Value")
                 self.add_data_series(uid, x_val, y_val, name=name_val, xlabel=xlabel, ylabel=ylabel)
             return
 
