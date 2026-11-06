@@ -1,18 +1,20 @@
 from __future__ import annotations
+
 from typing import Any, Dict, List, Optional, Tuple
 
-import dearpygui.dearpygui as dpg
-import numpy as np
 import cv2
+import dearpygui.dearpygui as dpg
 from loguru import logger
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
+import numpy as np
 
-from core.window_base import WindowBase
-from core.input_output_types import IOTypes
+from config.display_scaling import display_scaling
 from core.app_state import app_state
 from core.file_explorer import file_explorer
-from modules.plot.clipboard_injector import clipboardinjector
+from core.input_output_types import IOTypes
+from core.window_base import WindowBase
+from core.tools.clipboard_injector import clipboardinjector
 
 
 class ColorPieWin(WindowBase):
@@ -26,65 +28,49 @@ class ColorPieWin(WindowBase):
 
     description: str = "Circular pie chart rendering of categorical color distributions."
 
-    canvas_width: int
-    canvas_height: int
-    dpi: int
-    last_bgr_frame: Optional[np.ndarray]
-    _last_data: Optional[Dict[str, Any]]
+    # 1. Window Configuration
+    label = "Color Distribution Plot"
+    win_width = display_scaling.scale(600)
+    win_height = display_scaling.scale(500)
 
-    texture_registry_tag: str
-    texture_tag: str
+    # 2. Input/Output definitions
+    accepted_input_types = [IOTypes.CMD_DICT]
+    outputs = {
+        "Frame": IOTypes.FRAME,
+    }
 
-    def __init__(
-        self,
-        label: str = "Color Distribution Plot",
-        win_width: int = 600,
-        win_height: int = 500,
-        pos: Tuple[int, int] = (50, 450),
-        uuid: Optional[str] = None,
-        outputs: Optional[Dict[str, Any]] = None,
-        visible: bool = True,
-        **kwargs: Any,
-    ) -> None:
+    # 3. Persistent fields
+    persistent_fields = ["label"]
+
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the Color Distribution Pie Plot window module.
 
         Args:
-            label: Window display title.
-            win_width: Initial window width in pixels.
-            win_height: Initial window height in pixels.
-            pos: Initial (x, y) window position on screen.
-            uuid: Optional unique module identifier.
-            outputs: Optional predefined output connections dictionary.
-            visible: Whether the window is visible on creation.
-            **kwargs: Additional persistent parameters.
+            **kwargs: Configuration parameters and persistent fields forwarded to WindowBase.
         """
-        outputs = outputs or {
-            "Frame": IOTypes.FRAME,
-        }
-
-        super().__init__(
-            label=label,
-            pos=pos,
-            win_width=win_width,
-            win_height=win_height,
-            uuid=uuid,
-            outputs=outputs,
-            visible=visible,
-            **kwargs,
-        )
-
-        self.accepted_input_types = [IOTypes.CMD_DICT]
-        self.connections = {k: [] for k in self.outputs}
+        super().__init__(**kwargs)
 
         # Dimensions & state
-        self.canvas_width = 500
-        self.canvas_height = 400
+        self._is_closing = False
+        self.canvas_width = display_scaling.scale(500)
+        self.canvas_height = display_scaling.scale(400)
         self.dpi = 100
-        self.last_bgr_frame = None
-        self._last_data = None
+        self.last_bgr_frame: Optional[np.ndarray] = None
+        self._last_data: Optional[Dict[str, Any]] = None
+        self._tex_buffer: np.ndarray = np.zeros((self.canvas_height, self.canvas_width, 3), dtype=np.float32)
 
-        # Texture Handling
+        # Persistent Matplotlib Figure & Canvas
+        self._fig = Figure(
+            figsize=(self.canvas_width / self.dpi, self.canvas_height / self.dpi),
+            dpi=self.dpi,
+            facecolor="#1e1e1e",
+        )
+        self._canvas = FigureCanvas(self._fig)
+        self._ax = self._fig.add_axes([0, 0, 1, 1])
+        self._ax.set_facecolor("#1e1e1e")
+
+        # GPU Texture Handling
         self.texture_registry_tag = f"pie_registry_{self.UUID}"
         self.texture_tag = f"pie_texture_{self.UUID}"
 
@@ -92,34 +78,12 @@ class ColorPieWin(WindowBase):
             dpg.add_raw_texture(
                 width=self.canvas_width,
                 height=self.canvas_height,
-                default_value=np.zeros(self.canvas_width * self.canvas_height * 3, dtype=np.float32),
+                default_value=self._tex_buffer,
                 tag=self.texture_tag,
                 format=dpg.mvFormat_Float_rgb,
             )
 
-        self._build_ui()
-        self.update_permission()
-
-    def update_permission(self) -> None:
-        """
-        Adjust module permissions and UI visibility based on the application mode.
-        """
-        mode = app_state.mode
-        if dpg.does_item_exist(self.winID):
-            dpg.configure_item(self.winID, no_close=(mode == "user"))
-
-    def _build_ui(self) -> None:
-        """
-        Construct the Dear PyGui window interface layout.
-        """
-        with dpg.window(
-            label=self.label,
-            width=self.win_width,
-            height=self.win_height,
-            pos=self.pos,
-            tag=self.winID,
-            show=self.visible,
-        ):
+        with self.window():
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Copy Image", callback=self.copy_to_clipboard)
                 dpg.add_button(label="Export TSV", callback=self.export_tsv_to_clipboard)
@@ -132,6 +96,14 @@ class ColorPieWin(WindowBase):
                 with dpg.plot_axis(dpg.mvYAxis, no_gridlines=True, no_tick_labels=True, no_tick_marks=True):
                     dpg.add_image_series(self.texture_tag, [0, 0], [self.canvas_width, self.canvas_height])
 
+        self.update_permission()
+
+    def update_permission(self) -> None:
+        """Adjust module permissions and UI visibility based on the application mode."""
+        mode = app_state.mode
+        if dpg.does_item_exist(self.winID):
+            dpg.configure_item(self.winID, no_close=(mode == "user"))
+
     def is_ready(self) -> bool:
         """
         Check if the module is ready to receive input data.
@@ -141,6 +113,20 @@ class ColorPieWin(WindowBase):
         """
         return True
 
+    def on_close(self) -> None:
+        """Clean up GPU textures and registries on window close."""
+        if getattr(self, "_is_closing", False):
+            return
+        self._is_closing = True
+        if hasattr(self, "texture_registry_tag") and dpg.does_item_exist(self.texture_registry_tag):
+            dpg.delete_item(self.texture_registry_tag)
+        super().on_close()
+
+    def close(self) -> None:
+        """Clean up GPU textures and registries and close window."""
+        self.on_close()
+        super().close()
+
     def input_cb(self, data: Any = None, *args: Any, **kwargs: Any) -> None:
         """
         Handle incoming command dictionaries containing color distribution data.
@@ -148,8 +134,10 @@ class ColorPieWin(WindowBase):
         Expected command structure:
             {"action": "plot_pie", "distribution": {...}}
         """
-        if data is None and "data" in kwargs:
-            data = kwargs["data"]
+        if data is None:
+            data = kwargs.get("data")
+        if data is None and args:
+            data = args[0]
 
         if not isinstance(data, dict):
             return
@@ -176,18 +164,15 @@ class ColorPieWin(WindowBase):
 
             labels = list(plot_dist.keys())
             counts = [v["count"] for v in plot_dist.values()]
-            colors_rgb = [np.array(v["color"]) / 255.0 for v in plot_dist.values()]
+            colors_rgb = [
+                (c[0] * (1.0 / 255.0), c[1] * (1.0 / 255.0), c[2] * (1.0 / 255.0))
+                for v in plot_dist.values()
+                if (c := v["color"]) is not None
+            ]
 
-            fig = Figure(
-                figsize=(self.canvas_width / self.dpi, self.canvas_height / self.dpi),
-                dpi=self.dpi,
-                facecolor="#1e1e1e",
-            )
-            canvas = FigureCanvas(fig)
-            ax = fig.add_axes([0, 0, 1, 1])
-            ax.set_facecolor("#1e1e1e")
-
-            ax.pie(
+            self._ax.clear()
+            self._ax.set_facecolor("#1e1e1e")
+            self._ax.pie(
                 counts,
                 labels=labels,
                 autopct="%1.1f%%",
@@ -197,49 +182,43 @@ class ColorPieWin(WindowBase):
                 wedgeprops={"edgecolor": "gray", "linewidth": 0.5, "antialiased": True},
             )
 
-            canvas.draw()
-            rgba_buffer = canvas.buffer_rgba()
-            img_rgba = np.asarray(rgba_buffer)
+            self._canvas.draw()
+            img_rgba = np.asarray(self._canvas.buffer_rgba())
 
+            # Direct RGBA -> BGR for downstream and in-place RGB -> float32 for DPG texture
             img_bgr = cv2.cvtColor(img_rgba, cv2.COLOR_RGBA2BGR)
             self.last_bgr_frame = img_bgr
 
-            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-            flattened = img_rgb.ravel().astype(np.float32) / 255.0
-
-            if flattened.size == (self.canvas_width * self.canvas_height * 3):
-                dpg.set_value(self.texture_tag, flattened)
+            if img_rgba.shape[:2] == (self.canvas_height, self.canvas_width):
+                np.multiply(img_rgba[:, :, :3], 1.0 / 255.0, out=self._tex_buffer, casting="unsafe")
+                dpg.set_value(self.texture_tag, self._tex_buffer)
 
             for module in self.connections.get("Frame", []):
                 try:
                     module.input_cb(data=img_bgr, data_type=IOTypes.FRAME)
                 except Exception as e:
-                    logger.debug(f"ColorPieWin frame emission failed: {e}")
+                    logger.debug(f"[{self.label}] Frame emission failed: {e}")
 
         except Exception as e:
-            logger.error(f"Pie Plot Error: {e}")
+            logger.error(f"[{self.label}] Pie Plot Error: {e}")
 
     def copy_to_clipboard(self, *args: Any, **kwargs: Any) -> None:
-        """
-        Copy the latest rendered pie chart image to the system clipboard.
-        """
+        """Copy the latest rendered pie chart image to the system clipboard."""
         if self.last_bgr_frame is not None:
             clipboardinjector.send_image(self.last_bgr_frame)
-            logger.success("Pie plot image copied to clipboard.")
+            logger.success(f"[{self.label}] Pie plot image copied to clipboard.")
         else:
-            logger.warning("No pie plot frame available to copy.")
+            logger.warning(f"[{self.label}] No pie plot frame available to copy.")
 
     def export_tsv_to_clipboard(self, *args: Any, **kwargs: Any) -> None:
-        """
-        Export category counts and percentages to system clipboard in TSV format.
-        """
+        """Export category counts and percentages to system clipboard in TSV format."""
         if self._last_data is None:
-            logger.warning("No distribution data available to export.")
+            logger.warning(f"[{self.label}] No distribution data available to export.")
             return
 
         dist = self._last_data.get("distribution", {})
         if not dist:
-            logger.warning("Distribution data is empty.")
+            logger.warning(f"[{self.label}] Distribution data is empty.")
             return
 
         lines = ["Label\tCount\tPercentage (%)"]
@@ -252,25 +231,23 @@ class ColorPieWin(WindowBase):
 
         tsv_data = "\n".join(lines)
         clipboardinjector.send_text(tsv_data)
-        logger.success(f"TSV distribution data ({len(dist)} categories) copied to clipboard.")
+        logger.success(f"[{self.label}] TSV distribution data ({len(dist)} categories) copied to clipboard.")
 
     def _save_frame_trigger(self, *args: Any, **kwargs: Any) -> None:
-        """
-        Save the latest rendered pie chart to disk via file dialog.
-        """
+        """Save the latest rendered pie chart to disk via file dialog."""
         if self.last_bgr_frame is None:
-            logger.warning("No pie plot frame available to save.")
+            logger.warning(f"[{self.label}] No pie plot frame available to save.")
             return
 
-        def _on_save(filepath: str) -> None:
+        def _on_save(filepath: str, *args: Any) -> None:
             if filepath:
                 cv2.imwrite(filepath, self.last_bgr_frame)
-                logger.success(f"Pie plot saved to {filepath}")
+                logger.success(f"[{self.label}] Pie plot saved to {filepath}")
 
-        file_explorer.save_file_dialog(
+        file_explorer.save_file(
             callback=_on_save,
             default_path="color_distribution_pie.png",
-            file_types=[("PNG Files (*.png)", "*.png"), ("All Files (*.*)", "*.*")],
+            extensions=[("PNG Files (*.png)", "*.png"), ("All Files (*.*)", "*.*")],
         )
 
 
