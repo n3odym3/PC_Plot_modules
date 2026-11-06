@@ -1,15 +1,17 @@
 from __future__ import annotations
-import uuid
+
 from typing import Any, Dict, List, Optional, Tuple
+import uuid
 
 import dearpygui.dearpygui as dpg
-import numpy as np
 from loguru import logger
+import numpy as np
 
-from core.window_base import WindowBase
-from core.input_output_types import IOTypes
+from config.display_scaling import display_scaling
 from core.app_state import app_state
-from modules.plot.clipboard_injector import clipboardinjector
+from core.input_output_types import IOTypes
+from core.window_base import WindowBase
+from core.tools.clipboard_injector import clipboardinjector
 
 
 class Histogram_win(WindowBase):
@@ -23,98 +25,71 @@ class Histogram_win(WindowBase):
 
     description: str = "Interactive 1D histogram and density distribution viewer."
 
-    autoscale: bool
-    bins: int
-    density: bool
-    log_y: bool
-    smooth: bool
-    smooth_window: int
-    shading: bool
-    averaging: bool
-    avg_window: int
+    # 1. Window Configuration
+    label = "Histogram"
+    win_width = display_scaling.scale(350)
+    win_height = display_scaling.scale(240)
 
-    raw_data: Dict[str, Dict[str, Any]]
-    raw_data_history: Dict[str, List[np.ndarray]]
-    hist_data: Dict[str, Dict[str, Any]]
-    selected_uuid: Optional[str]
+    # 2. Input/Output definitions
+    accepted_input_types = [
+        IOTypes.SAMPLE,
+        IOTypes.ROI_SAMPLE,
+        IOTypes.DATALIST,
+        IOTypes.CMD_DICT,
+    ]
+    outputs = {
+        "Datalist": IOTypes.DATALIST,
+        "DataFrame": IOTypes.DATAFRAME,
+    }
 
-    plot_tag: str
-    anot_check_tag: str
-    autoscale_check_tag: str
-    density_check_tag: str
-    bins_tag: str
-    logY_check_tag: str
-    smooth_check_tag: str
-    smooth_win_tag: str
-    shading_check_tag: str
-    avg_check_tag: str
-    avg_win_tag: str
-    xaxis_tag: str
-    yaxis_tag: str
-    closest_point_anot_tag: str
-    handler_tag: str
-    export_btn_tag: str
+    # 3. Persistent fields
+    persistent_fields = [
+        "label",
+        "autoscale",
+        "bins",
+        "density",
+        "log_y",
+        "smooth",
+        "smooth_window",
+        "shading",
+        "averaging",
+        "avg_window",
+    ]
 
-    def __init__(
-        self,
-        label: str = "Histogram",
-        win_width: int = 350,
-        win_height: int = 240,
-        pos: Tuple[int, int] = (10, 10),
-        uuid: Optional[str] = None,
-        outputs: Optional[Dict[str, Any]] = None,
-        visible: bool = True,
-        autoscale: bool = True,
-        bins: int = 50,
-        density: bool = True,
-        log_y: bool = False,
-        smooth: bool = True,
-        smooth_window: int = 5,
-        shading: bool = True,
-        averaging: bool = True,
-        avg_window: int = 5,
-        **kwargs: Any,
-    ) -> None:
+    # Persistent field defaults
+    autoscale: bool = True
+    bins: int = 50
+    density: bool = True
+    log_y: bool = False
+    smooth: bool = True
+    smooth_window: int = 5
+    shading: bool = True
+    averaging: bool = True
+    avg_window: int = 5
+
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the Histogram window module.
 
         Args:
-            label: Window display title.
-            win_width: Initial window width in pixels.
-            win_height: Initial window height in pixels.
-            pos: Initial (x, y) window position on screen.
-            uuid: Optional unique module identifier.
-            outputs: Optional predefined output connections dictionary.
-            visible: Whether the window is visible on creation.
-            autoscale: Automatically fit plot axes when updated.
-            bins: Number of histogram bins.
-            density: Normalize histogram to probability density.
-            log_y: Apply logarithmic scaling to vertical axis.
-            smooth: Apply Gaussian kernel smoothing.
-            smooth_window: Width of Gaussian smoothing window.
-            shading: Display shaded fill beneath distribution curves.
-            averaging: Compute rolling average across sequential frames.
-            avg_window: Size of rolling average history buffer.
-            **kwargs: Additional configuration parameters and persistent fields.
+            **kwargs: Configuration parameters and persistent fields forwarded to WindowBase.
         """
-        actual_uuid = uuid if uuid is not None else kwargs.get("uuid_val")
+        if "uuid_val" in kwargs and "uuid" not in kwargs:
+            kwargs["uuid"] = kwargs["uuid_val"]
 
-        self._persistent_fields = [
-            "label", "autoscale", "bins", "density", "log_y",
-            "smooth", "smooth_window", "shading", "averaging", "avg_window"
-        ]
+        super().__init__(**kwargs)
 
-        super().__init__(
-            label=label,
-            pos=pos,
-            win_width=win_width,
-            win_height=win_height,
-            uuid=actual_uuid,
-            outputs=outputs,
-            visible=visible,
-            **kwargs,
-        )
+        self.autoscale = bool(self.autoscale if self.autoscale is not None else True)
+        self.bins = int(self.bins if self.bins is not None else 50)
+        self.density = bool(self.density if self.density is not None else True)
+        self.log_y = bool(self.log_y if self.log_y is not None else False)
+        self.smooth = bool(self.smooth if self.smooth is not None else True)
+        self.smooth_window = int(self.smooth_window if self.smooth_window is not None else 5)
+        self.shading = bool(self.shading if self.shading is not None else True)
+        self.averaging = bool(self.averaging if self.averaging is not None else True)
+        self.avg_window = int(self.avg_window if self.avg_window is not None else 5)
 
+        # Unique DPG tags
         self.plot_tag = f"histogram_plot_{self.UUID}"
         self.anot_check_tag = f"histogram_anot_check_{self.UUID}"
         self.autoscale_check_tag = f"histogram_autoscale_check_{self.UUID}"
@@ -133,43 +108,17 @@ class Histogram_win(WindowBase):
         self.handler_tag = f"histogram_handler_{self.UUID}"
         self.export_btn_tag = f"histogram_export_btn_{self.UUID}"
 
-        self.autoscale = autoscale
-        self.bins = bins
-        self.density = density
-        self.log_y = log_y
-        self.smooth = smooth
-        self.smooth_window = smooth_window
-        self.shading = shading
-        self.averaging = averaging
-        self.avg_window = avg_window
-
         # Data storage
-        self.raw_data = {}          # {UUID: {"data": np.array, "name": str, "color": ...}}
-        self.raw_data_history = {}  # {UUID: [data1, data2, ...]}
-        self.hist_data = {}         # {UUID: {"x": [], "y": [], "name": str}}
-        self.selected_uuid = None
+        self._is_closing: bool = False
+        self._cached_kernel_win: Optional[int] = None
+        self._cached_kernel: Optional[np.ndarray] = None
+        self.raw_data: Dict[str, Dict[str, Any]] = {}          # {UUID: {"data": np.array, "name": str, "color": ...}}
+        self.raw_data_history: Dict[str, List[np.ndarray]] = {}  # {UUID: [data1, data2, ...]}
+        self.hist_data: Dict[str, Dict[str, Any]] = {}         # {UUID: {"x": [], "y": [], "name": str}}
+        self.selected_uuid: Optional[str] = None
 
-        self.accepted_input_types = [
-            IOTypes.SAMPLE,
-            IOTypes.ROI_SAMPLE,
-            IOTypes.DATALIST,
-            IOTypes.CMD_DICT,
-        ]
-
-        self.outputs = {
-            "Datalist": IOTypes.DATALIST,
-            "CMD": IOTypes.CMD_DICT,
-        }
-        self.connections = {k: [] for k in self.outputs}
-
-        with dpg.window(
-            label=self.label,
-            width=self.win_width,
-            height=self.win_height,
-            pos=self.pos,
-            tag=self.winID,
-            show=self.visible,
-        ):
+        scale = display_scaling.scale
+        with self.window():
             with dpg.group(horizontal=True):
                 dpg.add_checkbox(label="Anotation", tag=self.anot_check_tag, default_value=True)
                 dpg.add_checkbox(label="Autoscale", tag=self.autoscale_check_tag, default_value=self.autoscale, callback=self.toggle_autoscale)
@@ -178,11 +127,11 @@ class Histogram_win(WindowBase):
                 dpg.add_checkbox(label="Shading", tag=self.shading_check_tag, default_value=self.shading, callback=self.toggle_shading)
 
             with dpg.group(horizontal=True):
-                dpg.add_drag_int(label="Bins", tag=self.bins_tag, default_value=self.bins, min_value=1, max_value=500, width=70, callback=self.update_bins)
+                dpg.add_drag_int(label="Bins", tag=self.bins_tag, default_value=self.bins, min_value=1, max_value=500, width=scale(70), callback=self.update_bins)
                 dpg.add_checkbox(label="Smooth", tag=self.smooth_check_tag, default_value=self.smooth, callback=self.toggle_smooth)
-                dpg.add_drag_int(label="Win", tag=self.smooth_win_tag, default_value=self.smooth_window, min_value=1, max_value=50, width=50, callback=self.update_smooth_win)
+                dpg.add_drag_int(label="Win", tag=self.smooth_win_tag, default_value=self.smooth_window, min_value=1, max_value=50, width=scale(50), callback=self.update_smooth_win)
                 dpg.add_checkbox(label="Avg", tag=self.avg_check_tag, default_value=self.averaging, callback=self.toggle_averaging)
-                dpg.add_drag_int(label="Avg Win", tag=self.avg_win_tag, default_value=self.avg_window, min_value=2, max_value=200, width=50, callback=self.update_avg_win)
+                dpg.add_drag_int(label="Avg Win", tag=self.avg_win_tag, default_value=self.avg_window, min_value=2, max_value=200, width=scale(50), callback=self.update_avg_win)
                 dpg.add_button(label="Export TSV", tag=self.export_btn_tag, callback=self.export_tsv_cb)
                 dpg.add_button(label="Send", callback=self.send_plot_cb)
                 dpg.add_button(label="Clear", callback=self.clear_plot)
@@ -201,9 +150,7 @@ class Histogram_win(WindowBase):
         self.update_permission()
 
     def update_permission(self) -> None:
-        """
-        Adjust module permissions and UI visibility based on the application mode.
-        """
+        """Adjust module permissions and UI visibility based on the application mode."""
         mode = app_state.mode
         elements = [
             self.anot_check_tag,
@@ -226,6 +173,24 @@ class Histogram_win(WindowBase):
 
         if dpg.does_item_exist(self.winID):
             dpg.configure_item(self.winID, no_close=(mode == "user"))
+
+    def on_close(self) -> None:
+        """Clean up handler registries and plot themes before closing."""
+        if getattr(self, "_is_closing", False):
+            return
+        self._is_closing = True
+        if hasattr(self, "handler_tag") and dpg.does_item_exist(self.handler_tag):
+            dpg.delete_item(self.handler_tag)
+        for uid in list(self.raw_data.keys()):
+            theme_tag = f"hist_theme_{uid}_{self.UUID}"
+            if dpg.does_item_exist(theme_tag):
+                dpg.delete_item(theme_tag)
+        super().on_close()
+
+    def close(self) -> None:
+        """Clean up handler registries and plot themes and close window."""
+        self.on_close()
+        super().close()
 
     def toggle_autoscale(self, sender: Any = None, app_data: Any = None, user_data: Any = None, *args: Any) -> None:
         """Toggle automatic axis fitting on data updates."""
@@ -302,12 +267,15 @@ class Histogram_win(WindowBase):
         if window <= 1 or len(y) < 3:
             return y
         radius = int(window)
-        sigma = max(1.0, window / 2.5)
-        x_k = np.arange(-radius, radius + 1)
-        kernel = np.exp(-0.5 * (x_k / sigma) ** 2)
-        kernel /= kernel.sum()
+        if self._cached_kernel_win != radius or self._cached_kernel is None:
+            sigma = max(1.0, radius / 2.5)
+            x_k = np.arange(-radius, radius + 1)
+            kernel = np.exp(-0.5 * (x_k / sigma) ** 2)
+            kernel /= kernel.sum()
+            self._cached_kernel_win = radius
+            self._cached_kernel = kernel
         pad_y = np.pad(y, radius, mode="edge")
-        smoothed = np.convolve(pad_y, kernel, mode="valid")
+        smoothed = np.convolve(pad_y, self._cached_kernel, mode="valid")
         return np.maximum(0.0, smoothed)
 
     def replot_all(self) -> None:
@@ -343,12 +311,12 @@ class Histogram_win(WindowBase):
 
             tsv_content = "\n".join(tsv_lines)
             clipboardinjector.send_text(tsv_content)
-            logger.info(f"Exported {len(series_list)} histogram series to clipboard as TSV")
+            logger.info(f"[{self.label}] Exported {len(series_list)} histogram series to clipboard as TSV")
         except Exception as e:
-            logger.error(f"Error exporting TSV: {e}")
+            logger.error(f"[{self.label}] Error exporting TSV: {e}")
 
     def send_plot_cb(self, sender: Any = None, app_data: Any = None, user_data: Any = None, *args: Any) -> None:
-        """Package active plot state and dispatch via CMD output."""
+        """Package active plot state and dispatch via DataFrame output."""
         try:
             all_series = []
             for uid, hist in self.hist_data.items():
@@ -359,24 +327,32 @@ class Histogram_win(WindowBase):
                 })
 
             if not all_series:
-                logger.warning("No data to send")
+                logger.warning(f"[{self.label}] No data to send")
                 return
 
-            payload = {
-                "action": "plot_data",
-                "series": all_series,
-                "title": self.label,
-                "xlabel": dpg.get_item_label(self.xaxis_tag),
-                "ylabel": dpg.get_item_label(self.yaxis_tag),
-                "x_lim": dpg.get_axis_limits(self.xaxis_tag),
-                "y_lim": dpg.get_axis_limits(self.yaxis_tag),
-                "log_y": dpg.get_value(self.logY_check_tag),
-            }
+            import pandas as pd
 
-            self.trigger_cb(out_key="CMD", data=payload)
-            logger.info(f"Sent {len(all_series)} series to CMD output")
+            df = pd.concat(
+                [
+                    pd.DataFrame({"serie": s["label"], "x": s["x"], "y": s["y"], "point": range(len(s["x"]))})
+                    for s in all_series
+                ],
+                ignore_index=True,
+            )
+
+            df.attrs.update(
+                title=self.label,
+                xlabel=dpg.get_item_label(self.xaxis_tag),
+                ylabel=dpg.get_item_label(self.yaxis_tag),
+                x_lim=dpg.get_axis_limits(self.xaxis_tag),
+                y_lim=dpg.get_axis_limits(self.yaxis_tag),
+                log_y=dpg.get_value(self.logY_check_tag),
+            )
+
+            self.trigger_cb(out_key="DataFrame", data=df)
+            logger.info(f"[{self.label}] Sent {len(all_series)} series to DataFrame output")
         except Exception as e:
-            logger.error(f"Error sending plot: {e}")
+            logger.error(f"[{self.label}] Error sending plot: {e}")
 
     def find_closest_point(
         self,
@@ -384,58 +360,67 @@ class Histogram_win(WindowBase):
         mouse_y: float,
         x_data: np.ndarray,
         y_data: np.ndarray,
+        x_scale: Optional[float] = None,
+        y_scale: Optional[float] = None,
     ) -> Optional[int]:
-        """
-        Find index of data point closest to current mouse coordinates.
-        """
+        """Find index of data point closest to current mouse coordinates."""
         if len(x_data) == 0 or len(y_data) == 0:
             return None
-        ptp_x = np.ptp(x_data)
-        ptp_y = np.ptp(y_data)
-        x_scale = 1.0 / ptp_x if ptp_x != 0 else 1.0
-        y_scale = 1.0 / ptp_y if ptp_y != 0 else 1.0
+        if x_scale is None:
+            ptp_x = np.ptp(x_data)
+            x_scale = 1.0 / ptp_x if ptp_x != 0 else 1.0
+        if y_scale is None:
+            ptp_y = np.ptp(y_data)
+            y_scale = 1.0 / ptp_y if ptp_y != 0 else 1.0
         distances = np.hypot((x_data - mouse_x) * x_scale, (y_data - mouse_y) * y_scale)
         return int(np.argmin(distances))
 
     def plot_change_callback(self, sender: Any = None, app_data: Any = None, user_data: Any = None, *args: Any) -> None:
-        """
-        Inspect closest point and render on-hover cursor tooltip annotation.
-        """
-        if dpg.is_item_hovered(self.plot_tag):
-            if dpg.get_value(self.anot_check_tag):
-                if not self.hist_data:
-                    if dpg.does_item_exist(self.closest_point_anot_tag):
-                        dpg.delete_item(self.closest_point_anot_tag)
-                    return
+        """Inspect closest point and render on-hover cursor tooltip annotation."""
+        if not self.hist_data or not dpg.does_item_exist(self.plot_tag) or not dpg.is_item_hovered(self.plot_tag):
+            return
 
-                uid_to_anot = self.selected_uuid if self.selected_uuid in self.hist_data else list(self.hist_data.keys())[0]
-                hist = self.hist_data[uid_to_anot]
+        if dpg.get_value(self.anot_check_tag):
+            uid_to_anot = self.selected_uuid if self.selected_uuid in self.hist_data else next(iter(self.hist_data))
+            hist = self.hist_data[uid_to_anot]
 
-                xplot = hist["x"]
-                yplot = hist["y"]
+            x_np = hist.get("x_np")
+            y_np = hist.get("y_np")
+            if x_np is None or y_np is None:
+                x_np = np.asarray(hist["x"], dtype=np.float64)
+                y_np = np.asarray(hist["y"], dtype=np.float64)
 
-                mouse_x, mouse_y = dpg.get_plot_mouse_pos()
-                point_index = self.find_closest_point(mouse_x, mouse_y, np.array(xplot), np.array(yplot))
+            mouse_x, mouse_y = dpg.get_plot_mouse_pos()
+            point_index = self.find_closest_point(
+                mouse_x,
+                mouse_y,
+                x_np,
+                y_np,
+                x_scale=hist.get("x_scale"),
+                y_scale=hist.get("y_scale"),
+            )
 
-                if point_index is not None:
-                    annot = f"Index : {point_index}\nBin Center : {xplot[point_index]:.4f}\nValue : {yplot[point_index]:.4f}"
-                    if dpg.does_item_exist(self.closest_point_anot_tag):
-                        dpg.configure_item(self.closest_point_anot_tag, label=annot, default_value=(xplot[point_index], yplot[point_index]))
-                    else:
-                        dpg.add_plot_annotation(
-                            tag=self.closest_point_anot_tag,
-                            label=annot,
-                            default_value=(xplot[point_index], yplot[point_index]),
-                            offset=(25, -25),
-                            color=[255, 255, 0, 255],
-                            parent=self.plot_tag,
-                        )
+            if point_index is not None:
+                px = float(x_np[point_index])
+                py = float(y_np[point_index])
+                annot = f"Index : {point_index}\nBin Center : {px:.4f}\nValue : {py:.4f}"
+                if dpg.does_item_exist(self.closest_point_anot_tag):
+                    dpg.configure_item(self.closest_point_anot_tag, label=annot, default_value=(px, py))
                 else:
-                    if dpg.does_item_exist(self.closest_point_anot_tag):
-                        dpg.delete_item(self.closest_point_anot_tag)
+                    dpg.add_plot_annotation(
+                        tag=self.closest_point_anot_tag,
+                        label=annot,
+                        default_value=(px, py),
+                        offset=(25, -25),
+                        color=[255, 255, 0, 255],
+                        parent=self.plot_tag,
+                    )
             else:
                 if dpg.does_item_exist(self.closest_point_anot_tag):
                     dpg.delete_item(self.closest_point_anot_tag)
+        else:
+            if dpg.does_item_exist(self.closest_point_anot_tag):
+                dpg.delete_item(self.closest_point_anot_tag)
 
     def autofit_axis(self, x: bool = True, y: bool = True) -> None:
         """Fit plot axes to active data bounds."""
@@ -480,8 +465,8 @@ class Histogram_win(WindowBase):
         if uid in self.hist_data:
             del self.hist_data[uid]
 
-        serie_id_line = f"hist_line_{uid}"
-        serie_id_shade = f"hist_shade_{uid}"
+        serie_id_line = f"hist_line_{uid}_{self.UUID}"
+        serie_id_shade = f"hist_shade_{uid}_{self.UUID}"
         theme_tag = f"hist_theme_{uid}_{self.UUID}"
 
         if dpg.does_item_exist(serie_id_line):
@@ -508,43 +493,46 @@ class Histogram_win(WindowBase):
         name = info["name"]
 
         if self.averaging and uid in self.raw_data_history and len(self.raw_data_history[uid]) > 0:
-            clean_history_list = []
-            for hist_item in self.raw_data_history[uid]:
-                clean = hist_item[~np.isnan(hist_item) & ~np.isinf(hist_item)]
-                if len(clean) > 0:
-                    clean_history_list.append(clean)
-
-            if not clean_history_list:
+            history_list = self.raw_data_history[uid]
+            combined_data = history_list[0] if len(history_list) == 1 else np.concatenate(history_list)
+            if len(combined_data) == 0:
                 return
 
-            combined_data = np.concatenate(clean_history_list)
             counts, bin_edges = np.histogram(combined_data, bins=self.bins, density=self.density)
 
             if not self.density:
-                counts = counts / len(clean_history_list)
+                counts = counts / len(history_list)
 
-            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
-            x_hist = bin_centers.tolist()
-            y_hist = counts.tolist()
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) * 0.5
+            counts_arr = np.asarray(counts, dtype=np.float64)
         else:
-            data_clean = data[~np.isnan(data) & ~np.isinf(data)]
-            if len(data_clean) == 0:
+            if len(data) == 0:
                 return
 
-            counts, bin_edges = np.histogram(data_clean, bins=self.bins, density=self.density)
-            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
-            x_hist = bin_centers.tolist()
-            y_hist = counts.tolist()
+            counts, bin_edges = np.histogram(data, bins=self.bins, density=self.density)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) * 0.5
+            counts_arr = np.asarray(counts, dtype=np.float64)
 
         if self.smooth:
-            y_arr = np.array(y_hist, dtype=np.float64)
-            y_hist = self._smooth_curve(y_arr, self.smooth_window).tolist()
+            counts_arr = self._smooth_curve(counts_arr, self.smooth_window)
 
-        self.hist_data[uid] = {"x": x_hist, "y": y_hist, "name": name}
+        x_hist = bin_centers.tolist()
+        y_hist = counts_arr.tolist()
+        ptp_x = float(bin_centers[-1] - bin_centers[0]) if len(bin_centers) > 1 else 0.0
+        ptp_y = float(np.ptp(counts_arr)) if len(counts_arr) > 1 else 0.0
+        self.hist_data[uid] = {
+            "x": x_hist,
+            "y": y_hist,
+            "x_np": bin_centers,
+            "y_np": counts_arr,
+            "x_scale": 1.0 / ptp_x if ptp_x != 0.0 else 1.0,
+            "y_scale": 1.0 / ptp_y if ptp_y != 0.0 else 1.0,
+            "name": name,
+        }
 
         color = info.get("color")
         if not color:
-            palette = [
+            palette = (
                 (31, 119, 180),
                 (255, 127, 14),
                 (44, 160, 44),
@@ -555,10 +543,11 @@ class Histogram_win(WindowBase):
                 (127, 127, 127),
                 (188, 189, 34),
                 (23, 190, 207),
-            ]
+            )
             keys_list = list(self.raw_data.keys())
             idx = keys_list.index(uid) if uid in keys_list else 0
             color = palette[idx % len(palette)]
+            info["color"] = color
 
         r, g, b = int(color[0]), int(color[1]), int(color[2])
 
@@ -569,15 +558,15 @@ class Histogram_win(WindowBase):
                     dpg.add_theme_color(dpg.mvPlotCol_Line, (r, g, b, 255), category=dpg.mvThemeCat_Plots)
                     dpg.add_theme_color(dpg.mvPlotCol_Fill, (r, g, b, 60), category=dpg.mvThemeCat_Plots)
 
-        serie_id_line = f"hist_line_{uid}"
-        serie_id_shade = f"hist_shade_{uid}"
+        serie_id_line = f"hist_line_{uid}_{self.UUID}"
+        serie_id_shade = f"hist_shade_{uid}_{self.UUID}"
 
         if self.shading:
             if dpg.does_item_exist(serie_id_shade):
                 dpg.configure_item(serie_id_shade, x=x_hist, y1=y_hist, show=True)
             else:
                 dpg.add_shade_series(x=x_hist, y1=y_hist, parent=self.yaxis_tag, tag=serie_id_shade)
-            dpg.bind_item_theme(serie_id_shade, theme_tag)
+                dpg.bind_item_theme(serie_id_shade, theme_tag)
         else:
             if dpg.does_item_exist(serie_id_shade):
                 dpg.delete_item(serie_id_shade)
@@ -588,7 +577,7 @@ class Histogram_win(WindowBase):
                 dpg.set_item_label(serie_id_line, name)
         else:
             dpg.add_line_series(x=x_hist, y=y_hist, label=name, parent=self.yaxis_tag, tag=serie_id_line)
-        dpg.bind_item_theme(serie_id_line, theme_tag)
+            dpg.bind_item_theme(serie_id_line, theme_tag)
 
         self.selected_uuid = uid
         if self.autoscale:
@@ -605,12 +594,17 @@ class Histogram_win(WindowBase):
         """
         if uid is None:
             uid = str(uuid.uuid4())
-        arr = np.array(data)
-        self.raw_data[uid] = {"data": arr, "name": name}
+        arr = np.asarray(data, dtype=np.float64).ravel()
+        clean = arr[np.isfinite(arr)]
+        if len(clean) == 0:
+            return
+
+        existing_color = self.raw_data[uid].get("color") if uid in self.raw_data else None
+        self.raw_data[uid] = {"data": clean, "name": name, "color": existing_color}
 
         if uid not in self.raw_data_history:
             self.raw_data_history[uid] = []
-        self.raw_data_history[uid].append(arr)
+        self.raw_data_history[uid].append(clean)
         if len(self.raw_data_history[uid]) > self.avg_window:
             self.raw_data_history[uid] = self.raw_data_history[uid][-self.avg_window:]
 
@@ -703,7 +697,7 @@ class Histogram_win(WindowBase):
         Dispatch data to all modules connected to a specific output port.
 
         Args:
-            out_key: Output port name ("Datalist" or "CMD").
+            out_key: Output port name ("Datalist" or "DataFrame").
             data: Payload object to emit.
         """
         if out_key in self.connections:
@@ -711,7 +705,7 @@ class Histogram_win(WindowBase):
                 try:
                     module.input_cb(data=data, data_type=self.outputs[out_key])
                 except Exception as e:
-                    logger.error(f"Error triggering output {out_key}: {e}")
+                    logger.error(f"[{self.label}] Error triggering output {out_key}: {e}")
 
 
 EXPORTED_CLASS = Histogram_win
