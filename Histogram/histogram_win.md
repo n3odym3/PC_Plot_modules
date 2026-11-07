@@ -11,8 +11,8 @@ The **Histogram** module computes, analyzes, and displays empirical frequency an
   - `IOTypes.CMD_DICT` (Dictionary supporting actions `"add serie"`, `"remove serie"`, `"update serie name"`, `"clear"`).
   - `IOTypes.DATALIST` (Direct numerical array input).
 - **Outputs**:
+  - `DataFrame`: `IOTypes.DATAFRAME` (Long-format pandas DataFrame with columns `serie`, `x`, `y`, `point` and plot metadata in `df.attrs`).
   - `Datalist`: `IOTypes.DATALIST` (List of points representing bin centers and counts).
-  - `CMD`: `IOTypes.CMD_DICT` (Export packet containing all series, labels, and axis limits).
 
 ---
 
@@ -25,4 +25,4 @@ The **Histogram** module computes, analyzes, and displays empirical frequency an
 - **Shaded Areas**: Toggle translucent area fill beneath distribution curves.
 - **Nearest-Point Cursor Inspection**: Interactive mouse hover tooltip displaying bin index, bin center coordinate, and frequency value.
 - **TSV Clipboard Export**: Instantly export aligned distribution tables across all active series to the clipboard for pasting into spreadsheet tools.
-- **Downstream Streaming (`Send`)**: Broadcasts active curves, axis limits, and configuration packets via `CMD` to other modules.
+- **Downstream Streaming (`Send Plot`)**: Broadcasts active curves as a DataFrame (`IOTypes.DATAFRAME`) with axis limits and configuration packets to downstream modules (e.g. `Matplot`).

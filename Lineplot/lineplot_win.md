@@ -13,7 +13,7 @@ The **Lineplot** module is an interactive 2D data visualization window designed 
 - **Logarithmic Scaling**: Switch between linear and logarithmic X-axis scales (`Log X`).
 - **Autoscale / Autofit**: Automatic axis scaling on data updates to keep series in view.
 - **TSV Clipboard Export**: One-click export of all plotted series into Tab-Separated Values (TSV) directly to the system clipboard for immediate pasting into Excel, Prism, or Python.
-- **Downstream Plot Streaming**: Broadcast current plot data, axis limits, and configuration via the `CMD` output (`Send Plot`).
+- **Downstream Plot Streaming**: Broadcast current plot series and metadata (`df.attrs`) via the `DataFrame` output (`Send Plot`) as a long-format pandas DataFrame.
 
 ---
 
@@ -31,8 +31,8 @@ The **Lineplot** module is an interactive 2D data visualization window designed 
 
 | Output Name | Type | Description |
 |---|---|---|
+| `DataFrame` | `IOTypes.DATAFRAME` | Emits long-format DataFrame (columns `serie`, `x`, `y`, `point`) with metadata in `df.attrs` (`title`, `xlabel`, `ylabel`, `x_lim`, `y_lim`, `log_x`, `colors`). |
 | `Datalist` | `IOTypes.DATALIST` | Emits data as a list of points. |
-| `CMD` | `IOTypes.CMD_DICT` | Emits structured plot packets with `action: "plot_data"`, series list, title, labels, and axis limits. |
 
 ---
 
@@ -41,8 +41,8 @@ The **Lineplot** module is an interactive 2D data visualization window designed 
 - **Anotation** (Checkbox): Enables hovering tooltips showing the nearest point's `Index`, `X`, and `Y`.
 - **Drag Line** (Checkbox): Toggles the interactive vertical cursor line.
 - **Autoscale** (Checkbox): Automatically fits X and Y axes when new data is received.
-- **Smooth** (Checkbox) & **Win** (Slider): Toggles moving average smoothing and sets the convolution window width ($1-50$).
+- **Smooth** (Checkbox), **Algo** (Combo) & **Win** (Slider): Toggles moving average / filtering smoothing (Rolling Median, Rolling Mean, Savitzky-Golay, Gaussian, Exponential EMA) and sets the window width.
 - **Log X** (Checkbox): Toggles logarithmic scaling on the horizontal axis.
 - **Export TSV** (Button): Copies all displayed series in column format (`X`, `Series1`, `Series2`...) to the clipboard.
-- **Send Plot** (Button): Packages the current graph state and transmits it to connected modules via `CMD`.
+- **Send Plot** (Button): Packages the current graph state and transmits it as a long-format DataFrame to connected downstream modules (such as `Matplot`).
 - **Clear Plot** (Button): Removes all series and annotations from the canvas.
